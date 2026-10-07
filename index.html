@@ -186,6 +186,7 @@
   let recStartTs = 0;
   let recTimerId = null;
   let micStream = null;
+  let audioCtx = null;
 
   function setStatus(msg, isErr) {
     statusEl.textContent = msg || "";
@@ -257,6 +258,7 @@
 
       if (isDirect) {
         videoEl.classList.remove("hidden");
+        videoEl.crossOrigin = "anonymous";
         videoEl.src = videoUrl;
       } else {
         frameEl.classList.remove("hidden");
@@ -292,6 +294,41 @@
     e.returnValue = "";
   }
 
+  // Trộn tiếng video (câu hỏi) + tiếng mic (câu trả lời) vào CÙNG 1 bản ghi.
+  // Khác với lần trước (cộng thẳng 2 nguồn gây vỡ tiếng), lần này:
+  //  - Giảm bớt âm lượng tiếng video trước khi trộn (video thường to hơn mic).
+  //  - Đưa cả 2 nguồn qua 1 bộ nén âm (compressor) để tổng âm lượng không bao giờ
+  //    vượt ngưỡng 0dB, tránh rè/vỡ tiếng dù học sinh nói to hay nhỏ.
+  // Nếu Cloudinary không cho phép CORS, hàm này sẽ ném lỗi -> code gọi nó sẽ tự
+  // chuyển về ghi âm mic đơn thuần (không lỗi, không mất bài ghi).
+  function buildMixedStream(videoElement, mic) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const dest = audioCtx.createMediaStreamDestination();
+
+    const compressor = audioCtx.createDynamicsCompressor();
+    compressor.threshold.value = -20;
+    compressor.knee.value = 24;
+    compressor.ratio.value = 8;
+    compressor.attack.value = 0.003;
+    compressor.release.value = 0.25;
+    compressor.connect(dest);
+
+    const micSource = audioCtx.createMediaStreamSource(mic);
+    const micGain = audioCtx.createGain();
+    micGain.gain.value = 1.0;
+    micSource.connect(micGain).connect(compressor);
+
+    const videoSource = audioCtx.createMediaElementSource(videoElement);
+    const videoGain = audioCtx.createGain();
+    videoGain.gain.value = 0.5; // giảm bớt để câu hỏi không át giọng học sinh / gây vỡ tiếng
+    videoSource.connect(videoGain).connect(compressor);
+    // Nối thêm ra loa để học sinh vẫn nghe được câu hỏi ở âm lượng bình thường
+    // (không qua compressor, không ảnh hưởng tới phần ghi âm).
+    videoSource.connect(audioCtx.destination);
+
+    return dest.stream;
+  }
+
   async function startTest() {
     const hoTen = hoTenEl.value.trim();
     if (!hoTen) {
@@ -325,12 +362,20 @@
       return;
     }
 
-    // Chỉ ghi âm mic (không trộn tiếng video vào) để giọng học sinh luôn rõ,
-    // không bị rè/nhiễu do cộng dồn 2 nguồn âm thanh.
+    let recordStream = micStream;
+    if (isDirect) {
+      try {
+        recordStream = buildMixedStream(videoEl, micStream);
+      } catch (err) {
+        // Không trộn được (CORS hoặc trình duyệt không hỗ trợ) -> ghi âm mic như bình thường.
+        recordStream = micStream;
+      }
+    }
+
     const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
       ? "audio/webm;codecs=opus"
       : (MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4" : "");
-    mediaRecorder = mimeType ? new MediaRecorder(micStream, { mimeType }) : new MediaRecorder(micStream);
+    mediaRecorder = mimeType ? new MediaRecorder(recordStream, { mimeType }) : new MediaRecorder(recordStream);
     chunks = [];
     mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
 
@@ -338,6 +383,7 @@
 
     mediaRecorder.onstop = async () => {
       micStream.getTracks().forEach((t) => t.stop());
+      if (audioCtx) { try { audioCtx.close(); } catch (e) {} }
       stopRecTimerUi();
       window.removeEventListener("beforeunload", beforeUnloadWarn);
       await submitRecording(mediaRecorder.mimeType || mimeType || "audio/webm");
