@@ -187,6 +187,7 @@
   let recTimerId = null;
   let micStream = null;
   let audioCtx = null;
+  let loadToken = 0;
 
   function setStatus(msg, isErr) {
     statusEl.textContent = msg || "";
@@ -194,11 +195,15 @@
   }
 
   function resetMediaUi() {
+    // Ẩn cả 2 khung bằng class LẪN inline style (display:none) — chắc chắn chỉ
+    // đúng 1 khung được hiện lại sau đó, không bao giờ lộ cả 2 cùng lúc.
     videoEl.classList.add("hidden");
+    videoEl.style.display = "none";
     videoEl.pause();
     videoEl.removeAttribute("src");
     videoEl.onended = null;
     frameEl.classList.add("hidden");
+    frameEl.style.display = "none";
     frameEl.src = "";
     iframeNote.classList.add("hidden");
     btnStart.classList.remove("hidden");
@@ -242,12 +247,18 @@
   }
 
   async function loadAssignment(ma) {
+    // Đánh dấu "phiên tải" riêng cho lần gọi này. Nếu học sinh đổi bài khác
+    // trước khi lần gọi này tải xong, kết quả cũ sẽ tự bị bỏ qua — tránh tình
+    // trạng 2 khung (video + khung nhúng) cùng hiện do kết quả cũ về muộn
+    // ghi đè lên kết quả mới.
+    const myToken = ++loadToken;
     resetMediaUi();
     setStatus("Đang tải đề bài...");
     btnStart.disabled = true;
     try {
       const res = await fetch(`${APPS_SCRIPT_URL}?action=getVideo&ma=${encodeURIComponent(ma)}`);
       const data = await res.json();
+      if (myToken !== loadToken) return; // đã có lần tải mới hơn, bỏ qua kết quả cũ này
       if (!data.ok) {
         setStatus(data.error || "Không tìm thấy đề bài.", true);
         return;
@@ -257,16 +268,19 @@
       isDirect = !!data.isDirect;
 
       if (isDirect) {
+        videoEl.style.display = "";
         videoEl.classList.remove("hidden");
         videoEl.crossOrigin = "anonymous";
         videoEl.src = videoUrl;
       } else {
+        frameEl.style.display = "";
         frameEl.classList.remove("hidden");
         iframeNote.classList.remove("hidden");
       }
       setStatus("");
       btnStart.disabled = false;
     } catch (err) {
+      if (myToken !== loadToken) return;
       setStatus("Không tải được đề bài. Kiểm tra lại kết nối mạng.", true);
     }
   }
