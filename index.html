@@ -142,7 +142,7 @@
 
     <div class="rec-badge" id="recBadge"><span class="dot"></span><span id="recTime">Đang ghi âm 0:00</span></div>
     <p class="status" id="statusMsg"></p>
-    <p class="note hidden" id="iframeNote">Video sẽ tự phát ngay sau khi bạn bấm "Bắt đầu làm bài". Khi video kết thúc, bấm nút "Nộp bài" màu đen để gửi bài.</p>
+    <p class="note hidden" id="iframeNote">Video sẽ tự phát ngay sau khi bạn bấm "Bắt đầu làm bài". Bấm nút "Nộp bài" màu đen bất cứ lúc nào để gửi bài — không bắt buộc phải đợi video chạy hết.</p>
   </div>
 
   <div class="card done hidden" id="doneCard">
@@ -373,8 +373,14 @@
     startRecTimerUi();
     setStatus("Đang làm bài — nghe câu hỏi và trả lời theo video.");
 
+    // Luôn hiện nút "Nộp bài": học sinh có thể bấm nộp bất cứ lúc nào trong
+    // lúc đang ghi âm, không bắt buộc phải đợi video chạy hết.
+    btnStart.classList.add("hidden");
+    btnSubmit.classList.remove("hidden");
+    btnSubmit.disabled = false;
+    btnSubmit.textContent = "Nộp bài";
+
     if (isDirect) {
-      btnStart.classList.add("hidden");
       videoEl.muted = false;
       try {
         await videoEl.play();
@@ -386,11 +392,9 @@
       };
     } else {
       // Dùng iframe: không có sự kiện "ended" đáng tin cậy từ cross-origin iframe,
-      // nên tự phát video trong khung và để học sinh bấm "Nộp bài" khi xong.
+      // nên tự phát video trong khung và để học sinh tự bấm "Nộp bài" khi xong.
       const sep = videoUrl.indexOf("?") >= 0 ? "&" : "?";
       frameEl.src = videoUrl + sep + "autoplay=true";
-      btnStart.classList.add("hidden");
-      btnSubmit.classList.remove("hidden");
     }
   }
 
